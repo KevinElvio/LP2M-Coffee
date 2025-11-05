@@ -1,7 +1,7 @@
 from flask import Flask
 from .config import Config
 from .extension import db, migrate
-from .models import Coffee
+# from .models import Coffee
 
 
 def create_app():
@@ -16,7 +16,7 @@ def create_app():
         db.create_all()
 
     # Register blueprints or routes here if needed
-    from .routes import main as main_blueprint
+    from .Routes import main as main_blueprint
     app.register_blueprint(main_blueprint)
 
     return app
