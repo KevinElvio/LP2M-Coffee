@@ -1,97 +1,87 @@
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, request, jsonify
+from flask_cors import CORS
 import pickle
 import joblib
 import numpy as np
-import pandas as pd
+import os
 
+# =========================
+# Inisialisasi Flask App
+# =========================
 app = Flask(__name__)
+CORS(app)
 
-# Muat model dan scaler
-# Pastikan path ke file ini benar
+# =========================
+# Path ke model dan scaler
+# =========================
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MODEL_PATH = os.path.join(BASE_DIR, 'model.pkl')
+SCALER_PATH = os.path.join(BASE_DIR, 'scaler_x.joblib')
+
+# =========================
+# Load Model & Scaler
+# =========================
 try:
-    model = pickle.load(open('model.pkl', 'rb'))
-    scaler = joblib.load('scaler_x.joblib')
-    # Definisikan le di sini atau muat juga jika sudah disimpan
-    # Contoh sederhana jika Anda tidak menyimpan LabelEncoder
-    # Pastikan urutan ini sesuai dengan LabelEncoder Anda saat training
+    print("🔄 Loading model and scaler...")
+    with open(MODEL_PATH, 'rb') as f:
+        model = pickle.load(f)
+    scaler = joblib.load(SCALER_PATH)
     labels = ["Arabica", "Robusta"]
-    print("Model and scaler loaded successfully.")
+    print("✅ Model and scaler loaded successfully.")
 except Exception as e:
-    print(f"Error loading model or scaler: {e}")
+    print(f"❌ Error loading model or scaler: {e}")
     model = None
     scaler = None
-    labels = ["Unknown"] # Default labels if loading fails
+    labels = ["Unknown"]
 
-
+# =========================
+# Route Utama
+# =========================
 @app.route('/')
 def index():
-    # return render_template('index.html')
-    return ('Hello World!')
+    return jsonify({"message": "Flask model API is running successfully 🚀"})
 
+# =========================
+# Route Prediksi
+# =========================
 @app.route('/predict', methods=['POST'])
 def predict():
     if model is None or scaler is None:
-        return jsonify({'error': 'Model or scaler not loaded on the server. Please check server logs.'}), 500
+        return jsonify({'error': 'Model or scaler not loaded properly.'}), 500
 
     data = request.get_json(force=True)
-    print("Received data:", data)
+    print("📦 Received data:", data)
 
-    features = ['Aroma','Flavor','Aftertaste','Acidity', 'Sweetness']# Sesuaikan dengan urutan fitur Anda
+    features = ['Aroma', 'Flavor', 'Aftertaste', 'Acidity', 'Sweetness']
 
-    # Buat numpy array dari data input dengan validasi sederhana
-    input_values = []
     try:
-        for feature in features:
-            value = data.get(feature)
-            if value is None:
-                 return jsonify({'error': f"Missing feature: {feature}"}), 400 # Bad Request
-            try:
-                # Coba konversi ke float
-                input_values.append(float(value))
-            except ValueError:
-                 return jsonify({'error': f"Invalid value for feature {feature}: {value}. Expected a number."}), 400
+        # Validasi & konversi input
+        input_values = [float(data.get(f)) for f in features]
+    except (ValueError, TypeError) as e:
+        return jsonify({'error': f'Invalid input: {e}'}), 400
 
-    except Exception as e:
-         return jsonify({'error': f"Error processing input data: {e}"}), 400
-
-
-    input_data = np.array([input_values])
-
-    # Lakukan scaling pada data input
+    # Skala data
     try:
-        scaled_data = scaler.transform(input_data)
+        scaled_data = scaler.transform([input_values])
+        scaled_data = np.expand_dims(scaled_data, axis=1)  # untuk LSTM
     except Exception as e:
-        print(f"Error during scaling: {e}")
-        return jsonify({'error': f"Error processing data for prediction: {e}"}), 500
+        return jsonify({'error': f'Scaling error: {e}'}), 500
 
-
-    # Reshape untuk LSTM (sesuai dengan cara Anda melatih model)
-    # Periksa bentuk data sebelum reshape jika perlu debugging
-    # print("Shape before reshape:", scaled_data.shape)
-    scaled_data_lstm = np.expand_dims(scaled_data, axis=1)
-    # print("Shape after reshape:", scaled_data_lstm.shape)
-
-
-    # Lakukan prediksi
+    # Prediksi
     try:
-        prediction_proba = model.predict(scaled_data_lstm)
-        predicted_class_index = np.argmax(prediction_proba, axis=1)[0]
-
-        # Menggunakan labels yang sudah dimuat
-        predicted_label = labels[predicted_class_index]
-
-    except IndexError:
-         predicted_label = "Unknown Species (Index out of bounds)"
-         print(f"Warning: Predicted class index {predicted_class_index} out of bounds for labels list of size {len(labels)}")
+        prediction_proba = model.predict(scaled_data)
+        predicted_index = int(np.argmax(prediction_proba, axis=1)[0])
+        predicted_label = labels[predicted_index] if predicted_index < len(labels) else "Unknown"
     except Exception as e:
-        print(f"Error during prediction: {e}")
-        return jsonify({'error': f"Error during model prediction: {e}"}), 500
+        return jsonify({'error': f'Model prediction error: {e}'}), 500
 
+    return jsonify({
+        'prediction': predicted_label,
+        'probabilities': prediction_proba.tolist()
+    })
 
-    return jsonify({'prediction': predicted_label})
-
+# =========================
+# Main Runner
+# =========================
 if __name__ == '__main__':
-    # Untuk deployment, ubah debug=True menjadi False
-    # dan gunakan server produksi seperti Gunicorn atau uWSGI
-    app.run(debug=True)
-
+    app.run(host='0.0.0.0', port=7860, debug=False)
